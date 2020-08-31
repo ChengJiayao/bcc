@@ -1,0 +1,106 @@
+Demonstrations of kvm exit reasons, the Linux eBPF/bcc version.
+
+
+This tool displays the detail exit_reason and its statistics of each
+kvm_exit for all virtual machines running on this physical machine.
+
+Example output:
+
+# ./kvmexit.py
+Display kvm_exit_reason and its statistics... Hit Ctrl-C to end.
+TGID     PID      KVM_EXIT_REASON                     STAT
+^C1273551  1273568  EXIT_REASON_HLT                     12
+1273551  1273568  EXIT_REASON_MSR_WRITE               6
+1274253  1274261  EXIT_REASON_EXTERNAL_INTERRUPT      1
+1274253  1274261  EXIT_REASON_HLT                     12
+1274253  1274261  EXIT_REASON_MSR_WRITE               4
+
+# ./kvmexit.py 6
+Display kvm_exit_reason and its statistics for 6 secs.
+TGID     PID      KVM_EXIT_REASON                     STAT
+1273903  1273922  EXIT_REASON_EXTERNAL_INTERRUPT      175
+1273903  1273922  EXIT_REASON_CPUID                   10
+1273903  1273922  EXIT_REASON_HLT                     6043
+1273903  1273922  EXIT_REASON_IO_INSTRUCTION          24
+1273903  1273922  EXIT_REASON_MSR_WRITE               15025
+1273903  1273922  EXIT_REASON_PAUSE_INSTRUCTION       11
+1273903  1273922  EXIT_REASON_EOI_INDUCED             12
+1273903  1273922  EXIT_REASON_EPT_VIOLATION           6
+1273903  1273922  EXIT_REASON_EPT_MISCONFIG           380
+1273903  1273922  EXIT_REASON_PREEMPTION_TIMER        194
+1273551  1273568  EXIT_REASON_EXTERNAL_INTERRUPT      18
+1273551  1273568  EXIT_REASON_HLT                     989
+1273551  1273568  EXIT_REASON_IO_INSTRUCTION          10
+1273551  1273568  EXIT_REASON_MSR_WRITE               2205
+1273551  1273568  EXIT_REASON_PAUSE_INSTRUCTION       1
+1273551  1273568  EXIT_REASON_EOI_INDUCED             5
+1273551  1273568  EXIT_REASON_EPT_MISCONFIG           61
+1273551  1273568  EXIT_REASON_PREEMPTION_TIMER        14
+
+
+
+# Help to understand
+We use a PERCPU_ARRAY: cacheA and a percpu_hash: hashA to
+collaboratively store each kvm exit reason and its statistics.
+
+BTW, we originally use a common hash to do this, with a u64(exit_reason)
+key and a struct exit_info {tgid_pid, exit_reason} value. But due to
+the big lock in bpf_hash, each updating is quite performance consuming.
+
+According to the rule: the vcpu tend to switch to running on the same
+physical cpu (pcpu as follows, we call this 'cache hit'), we turn to use
+a PERCPU_ARRAY to record the cache if hit the same pcpu. And for other
+cases use a percpu_hash. Imagine here is a exited pid_tgidA trying to
+run on the current pcpuA, flow as follows:
+
+               pid_tgidA keeps running on the same pcpu
+                        //               \\
+                       //                 \\
+                      // Y               N \\
+                     //                     \\
+             a. cache_hit               b. cache_miss
+(cacheA's pid_tgid matches pid_tgidA)        ||
+                  |                          ||
+                  |                          ||
+    "update exit_ct and return"              ||
+                                 pid_tgidA ever been exited on pcpuA?
+                                           //   \\
+                                          //     \\
+                                         //       \\
+                                        // Y     N \\
+                                       //           \\
+                          b.a load_last_hashA   b.b initialize_hashA_with_zero
+                                          \       /
+                                           \     /
+                                            \   /
+                                      "update exit_ct"
+                                             ||
+                                             ||
+                           is another pid_tgid been running on pcpuA?
+                                        //          \\
+                                       // Y        N \\
+                                      //              \\
+                       b.*.a save_another_hashB    do_nothing
+                                           \\       //
+                                            \\     //
+                                             \\   //
+                                       b.* save_to_cacheA
+
+
+
+USAGE message:
+
+# ./kvmexit.py -h
+usage: kvmexit.py [-h] [duration]
+
+Display kvm_exit_reason and its statistics at a timed interval
+
+positional arguments:
+  duration    duration of trace, in seconds
+
+optional arguments:
+  -h, --help  show this help message and exit
+
+examples:
+    ./kvmexit             # Display kvm_exit_reason and its statistics until Ctrl-C
+    ./kvmexit 5           # Display kvm_exit_reason and its statistics for 5 seconds only
