@@ -1010,6 +1010,13 @@ class BPF(object):
             return True
         return False
 
+    @staticmethod
+    def support_raw_tracepoint_module():
+        # kernel symbol "bpf_trace_modules" indicates raw_tracepoint module support
+        if BPF.ksymname("bpf_trace_modules") != -1:
+            return True
+        return False
+
     def detach_tracepoint(self, tp=b""):
         """detach_tracepoint(tp="")
 
