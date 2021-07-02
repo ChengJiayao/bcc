@@ -261,13 +261,18 @@ except Exception as e:
 
 try:
     # Let's firstly try raw_tracepoint_module
-    if support_raw_tracepoint_module():
+    #if support_raw_tracepoint_module():
+    try:
         func_entry = "RAW_TRACEPOINT_PROBE(kvm_exit)"
         get_er = "ctx->args[0]"
-    else:
+    except:
+        pass
+    try:
     # If raw_tp_module is not supported, fall back to normal tp
         func_entry = "TRACEPOINT_PROBE(kvm, kvm_exit)"
         get_er = "args->exit_reason"
+    except:
+        raise Exception("Failed to catch kvm exit reasons using tracepoint")
 except Exception as e:
     raise Exception("Failed to catch kvm exit reasons due to: %s" % e)
 
